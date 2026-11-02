@@ -1,0 +1,16 @@
+// Executive summary counts for the top of the report.
+recoveryservicesresources
+| where type =~ 'microsoft.recoveryservices/vaults/backupfabrics/protectioncontainers/protecteditems'
+| extend protectionState = tostring(coalesce(properties.protectionState, properties.currentProtectionState)),
+         lastStatus      = tostring(properties.lastBackupStatus),
+         lastBackup      = todatetime(properties.lastBackupTime)
+| extend health = case(
+        protectionState in~ ('ProtectionStopped', 'SoftDeleted'), 'Stopped',
+        lastStatus =~ 'Failed' or protectionState =~ 'ProtectionError', 'Failed',
+        isnull(lastBackup) or lastBackup < ago(26h), 'Stale',
+        'Healthy')
+| summarize total   = count(),
+            healthy = countif(health == 'Healthy'),
+            failed  = countif(health == 'Failed'),
+            stale   = countif(health == 'Stale'),
+            stopped = countif(health == 'Stopped')

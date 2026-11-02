@@ -1,0 +1,14 @@
+// Backup and restore jobs from the last 24 hours, newest first.
+// Resource Graph keeps 14 days of jobs; use Log Analytics for longer history.
+recoveryservicesresources
+| where type =~ 'microsoft.recoveryservices/vaults/backupjobs'
+| extend vaultName = tostring(split(id, '/')[8]),
+         item      = tostring(properties.entityFriendlyName),
+         workload  = tostring(properties.backupManagementType),
+         operation = tostring(properties.operation),
+         status    = tostring(properties.status),
+         startTime = todatetime(properties.startTime),
+         endTime   = todatetime(properties.endTime)
+| where startTime > ago(24h)
+| project startTime, endTime, vaultName, item, workload, operation, status, subscriptionId
+| order by startTime desc

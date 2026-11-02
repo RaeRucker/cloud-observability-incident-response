@@ -1,0 +1,15 @@
+// VMs with no backup configured (excludes AKS node resource groups).
+resources
+| where type =~ 'microsoft.compute/virtualmachines'
+| where resourceGroup !startswith 'mc_'
+| extend vmId = tolower(id)
+| join kind=leftouter (
+    recoveryservicesresources
+    | where type =~ 'microsoft.recoveryservices/vaults/backupfabrics/protectioncontainers/protecteditems'
+    | where properties.backupManagementType == 'AzureIaasVM'
+    | extend vmId = tolower(tostring(properties.sourceResourceId))
+    | project vmId, policy = tostring(properties.policyName)
+  ) on vmId
+| where isempty(policy)
+| project subscriptionId, resourceGroup, name, location
+| order by subscriptionId asc, name asc

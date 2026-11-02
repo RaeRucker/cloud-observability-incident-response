@@ -1,0 +1,9 @@
+// Azure Policy assignments that enforce backup (matches the backup-<tier>-<region> naming convention).
+policyresources
+| where type =~ 'microsoft.authorization/policyassignments'
+| extend displayName = tostring(properties.displayName),
+         enforcement = tostring(properties.enforcementMode),
+         scope       = tostring(properties.scope)
+| where name has 'backup' or displayName has 'backup'
+| project displayName, enforcement, scope, subscriptionId
+| order by displayName asc

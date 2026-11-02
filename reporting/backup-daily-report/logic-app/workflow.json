@@ -1,0 +1,466 @@
+{
+  "definition": {
+    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+      "$connections": {
+        "type": "Object",
+        "defaultValue": {}
+      },
+      "subscriptionIds": {
+        "type": "Array",
+        "defaultValue": [
+          "<SUBSCRIPTION_ID>"
+        ]
+      },
+      "reportRecipients": {
+        "type": "String",
+        "defaultValue": "backup-report@example.com"
+      },
+      "failureRecipients": {
+        "type": "String",
+        "defaultValue": "ops-team@example.com"
+      },
+      "reportTitle": {
+        "type": "String",
+        "defaultValue": "Daily Azure Backup Report"
+      }
+    },
+    "triggers": {
+      "Daily_6AM_Eastern": {
+        "type": "Recurrence",
+        "recurrence": {
+          "frequency": "Day",
+          "interval": 1,
+          "timeZone": "Eastern Standard Time",
+          "schedule": {
+            "hours": [
+              "6"
+            ],
+            "minutes": [
+              0
+            ]
+          }
+        }
+      }
+    },
+    "actions": {
+      "Build_report": {
+        "type": "Scope",
+        "actions": {
+          "Query_summary": {
+            "type": "Http",
+            "runAfter": {},
+            "inputs": {
+              "method": "POST",
+              "uri": "https://management.azure.com/providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01",
+              "body": {
+                "subscriptions": "@parameters('subscriptionIds')",
+                "query": "recoveryservicesresources\n| where type =~ 'microsoft.recoveryservices/vaults/backupfabrics/protectioncontainers/protecteditems'\n| extend protectionState = tostring(coalesce(properties.protectionState, properties.currentProtectionState)),\n         lastStatus      = tostring(properties.lastBackupStatus),\n         lastBackup      = todatetime(properties.lastBackupTime)\n| extend health = case(\n        protectionState in~ ('ProtectionStopped', 'SoftDeleted'), 'Stopped',\n        lastStatus =~ 'Failed' or protectionState =~ 'ProtectionError', 'Failed',\n        isnull(lastBackup) or lastBackup < ago(26h), 'Stale',\n        'Healthy')\n| summarize total   = count(),\n            healthy = countif(health == 'Healthy'),\n            failed  = countif(health == 'Failed'),\n            stale   = countif(health == 'Stale'),\n            stopped = countif(health == 'Stopped')",
+                "options": {
+                  "$top": 1000
+                }
+              },
+              "authentication": {
+                "type": "ManagedServiceIdentity",
+                "audience": "https://management.azure.com/"
+              }
+            }
+          },
+          "Query_protected_items": {
+            "type": "Http",
+            "runAfter": {},
+            "inputs": {
+              "method": "POST",
+              "uri": "https://management.azure.com/providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01",
+              "body": {
+                "subscriptions": "@parameters('subscriptionIds')",
+                "query": "recoveryservicesresources\n| where type =~ 'microsoft.recoveryservices/vaults/backupfabrics/protectioncontainers/protecteditems'\n| extend vaultName       = tostring(split(id, '/')[8]),\n         item            = tostring(properties.friendlyName),\n         workload        = tostring(properties.workloadType),\n         policy          = tostring(properties.policyName),\n         protectionState = tostring(coalesce(properties.protectionState, properties.currentProtectionState)),\n         lastStatus      = tostring(properties.lastBackupStatus),\n         lastBackup      = todatetime(properties.lastBackupTime)\n| extend health = case(\n        protectionState in~ ('ProtectionStopped', 'SoftDeleted'), 'Stopped',\n        lastStatus =~ 'Failed' or protectionState =~ 'ProtectionError', 'Failed',\n        isnull(lastBackup) or lastBackup < ago(26h), 'Stale',\n        'Healthy')\n| project subscriptionId, resourceGroup, vaultName, item, workload, policy, health, protectionState, lastStatus, lastBackup\n| order by health asc, vaultName asc, item asc",
+                "options": {
+                  "$top": 1000
+                }
+              },
+              "authentication": {
+                "type": "ManagedServiceIdentity",
+                "audience": "https://management.azure.com/"
+              }
+            }
+          },
+          "Query_backup_jobs": {
+            "type": "Http",
+            "runAfter": {},
+            "inputs": {
+              "method": "POST",
+              "uri": "https://management.azure.com/providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01",
+              "body": {
+                "subscriptions": "@parameters('subscriptionIds')",
+                "query": "recoveryservicesresources\n| where type =~ 'microsoft.recoveryservices/vaults/backupjobs'\n| extend vaultName = tostring(split(id, '/')[8]),\n         item      = tostring(properties.entityFriendlyName),\n         workload  = tostring(properties.backupManagementType),\n         operation = tostring(properties.operation),\n         status    = tostring(properties.status),\n         startTime = todatetime(properties.startTime),\n         endTime   = todatetime(properties.endTime)\n| where startTime > ago(24h)\n| project startTime, endTime, vaultName, item, workload, operation, status, subscriptionId\n| order by startTime desc",
+                "options": {
+                  "$top": 1000
+                }
+              },
+              "authentication": {
+                "type": "ManagedServiceIdentity",
+                "audience": "https://management.azure.com/"
+              }
+            }
+          },
+          "Query_vault_health": {
+            "type": "Http",
+            "runAfter": {},
+            "inputs": {
+              "method": "POST",
+              "uri": "https://management.azure.com/providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01",
+              "body": {
+                "subscriptions": "@parameters('subscriptionIds')",
+                "query": "resources\n| where type =~ 'microsoft.recoveryservices/vaults'\n| project subscriptionId, resourceGroup, vaultName = name, location,\n          redundancy          = tostring(properties.redundancySettings.standardTierStorageRedundancy),\n          crossRegionRestore  = tostring(properties.redundancySettings.crossRegionRestore),\n          immutability        = tostring(properties.securitySettings.immutabilitySettings.state),\n          softDelete          = tostring(properties.securitySettings.softDeleteSettings.softDeleteState),\n          publicNetworkAccess = tostring(properties.publicNetworkAccess)\n| order by vaultName asc",
+                "options": {
+                  "$top": 1000
+                }
+              },
+              "authentication": {
+                "type": "ManagedServiceIdentity",
+                "audience": "https://management.azure.com/"
+              }
+            }
+          },
+          "Query_policy_assignments": {
+            "type": "Http",
+            "runAfter": {},
+            "inputs": {
+              "method": "POST",
+              "uri": "https://management.azure.com/providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01",
+              "body": {
+                "subscriptions": "@parameters('subscriptionIds')",
+                "query": "policyresources\n| where type =~ 'microsoft.authorization/policyassignments'\n| extend displayName = tostring(properties.displayName),\n         enforcement = tostring(properties.enforcementMode),\n         scope       = tostring(properties.scope)\n| where name has 'backup' or displayName has 'backup'\n| project displayName, enforcement, scope, subscriptionId\n| order by displayName asc",
+                "options": {
+                  "$top": 1000
+                }
+              },
+              "authentication": {
+                "type": "ManagedServiceIdentity",
+                "audience": "https://management.azure.com/"
+              }
+            }
+          },
+          "Query_backup_vault_instances": {
+            "type": "Http",
+            "runAfter": {},
+            "inputs": {
+              "method": "POST",
+              "uri": "https://management.azure.com/providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01",
+              "body": {
+                "subscriptions": "@parameters('subscriptionIds')",
+                "query": "recoveryservicesresources\n| where type =~ 'microsoft.dataprotection/backupvaults/backupinstances'\n| extend vaultName  = tostring(split(id, '/')[8]),\n         datasource = tostring(properties.dataSourceInfo.resourceName),\n         dsType     = tostring(properties.dataSourceInfo.datasourceType),\n         status     = tostring(properties.protectionStatus.status),\n         policy     = extract(@'backupPolicies/([^/]+)$', 1, tostring(properties.policyInfo.policyId))\n| project subscriptionId, vaultName, datasource, datasourceType = dsType, policy, status\n| order by vaultName asc, datasource asc",
+                "options": {
+                  "$top": 1000
+                }
+              },
+              "authentication": {
+                "type": "ManagedServiceIdentity",
+                "audience": "https://management.azure.com/"
+              }
+            }
+          },
+          "Filter_needs_attention": {
+            "type": "Query",
+            "runAfter": {
+              "Query_protected_items": [
+                "Succeeded"
+              ]
+            },
+            "inputs": {
+              "from": "@body('Query_protected_items')?['data']",
+              "where": "@not(equals(item()?['health'], 'Healthy'))"
+            }
+          },
+          "Select_needs_attention": {
+            "type": "Select",
+            "runAfter": {
+              "Filter_needs_attention": [
+                "Succeeded"
+              ]
+            },
+            "inputs": {
+              "from": "@body('Filter_needs_attention')",
+              "select": {
+                "Status": "@item()?['health']",
+                "Item": "@item()?['item']",
+                "Workload": "@item()?['workload']",
+                "Vault": "@item()?['vaultName']",
+                "Policy": "@item()?['policy']",
+                "Last backup (ET)": "@{if(empty(item()?['lastBackup']), '', convertFromUtc(item()?['lastBackup'], 'Eastern Standard Time', 'yyyy-MM-dd HH:mm'))}"
+              }
+            }
+          },
+          "Table_needs_attention": {
+            "type": "Table",
+            "runAfter": {
+              "Select_needs_attention": [
+                "Succeeded"
+              ]
+            },
+            "inputs": {
+              "from": "@body('Select_needs_attention')",
+              "format": "HTML"
+            }
+          },
+          "Select_protected_items_csv": {
+            "type": "Select",
+            "runAfter": {
+              "Query_protected_items": [
+                "Succeeded"
+              ]
+            },
+            "inputs": {
+              "from": "@body('Query_protected_items')?['data']",
+              "select": {
+                "Health": "@item()?['health']",
+                "Item": "@item()?['item']",
+                "Workload": "@item()?['workload']",
+                "Vault": "@item()?['vaultName']",
+                "ResourceGroup": "@item()?['resourceGroup']",
+                "Policy": "@item()?['policy']",
+                "ProtectionState": "@item()?['protectionState']",
+                "LastBackupStatus": "@item()?['lastStatus']",
+                "LastBackupET": "@{if(empty(item()?['lastBackup']), '', convertFromUtc(item()?['lastBackup'], 'Eastern Standard Time', 'yyyy-MM-dd HH:mm'))}",
+                "SubscriptionId": "@item()?['subscriptionId']"
+              }
+            }
+          },
+          "Csv_protected_items": {
+            "type": "Table",
+            "runAfter": {
+              "Select_protected_items_csv": [
+                "Succeeded"
+              ]
+            },
+            "inputs": {
+              "from": "@body('Select_protected_items_csv')",
+              "format": "CSV"
+            }
+          },
+          "Select_jobs_csv": {
+            "type": "Select",
+            "runAfter": {
+              "Query_backup_jobs": [
+                "Succeeded"
+              ]
+            },
+            "inputs": {
+              "from": "@body('Query_backup_jobs')?['data']",
+              "select": {
+                "StartET": "@{if(empty(item()?['startTime']), '', convertFromUtc(item()?['startTime'], 'Eastern Standard Time', 'yyyy-MM-dd HH:mm'))}",
+                "EndET": "@{if(empty(item()?['endTime']), '', convertFromUtc(item()?['endTime'], 'Eastern Standard Time', 'yyyy-MM-dd HH:mm'))}",
+                "Vault": "@item()?['vaultName']",
+                "Item": "@item()?['item']",
+                "Workload": "@item()?['workload']",
+                "Operation": "@item()?['operation']",
+                "Status": "@item()?['status']"
+              }
+            }
+          },
+          "Csv_job_list": {
+            "type": "Table",
+            "runAfter": {
+              "Select_jobs_csv": [
+                "Succeeded"
+              ]
+            },
+            "inputs": {
+              "from": "@body('Select_jobs_csv')",
+              "format": "CSV"
+            }
+          },
+          "Select_vault_health": {
+            "type": "Select",
+            "runAfter": {
+              "Query_vault_health": [
+                "Succeeded"
+              ]
+            },
+            "inputs": {
+              "from": "@body('Query_vault_health')?['data']",
+              "select": {
+                "Vault": "@item()?['vaultName']",
+                "Region": "@item()?['location']",
+                "Redundancy": "@item()?['redundancy']",
+                "Cross region restore": "@item()?['crossRegionRestore']",
+                "Immutability": "@item()?['immutability']",
+                "Soft delete": "@item()?['softDelete']",
+                "Public access": "@item()?['publicNetworkAccess']"
+              }
+            }
+          },
+          "Table_vault_health": {
+            "type": "Table",
+            "runAfter": {
+              "Select_vault_health": [
+                "Succeeded"
+              ]
+            },
+            "inputs": {
+              "from": "@body('Select_vault_health')",
+              "format": "HTML"
+            }
+          },
+          "Select_policy_assignments": {
+            "type": "Select",
+            "runAfter": {
+              "Query_policy_assignments": [
+                "Succeeded"
+              ]
+            },
+            "inputs": {
+              "from": "@body('Query_policy_assignments')?['data']",
+              "select": {
+                "Assignment": "@item()?['displayName']",
+                "Enforcement": "@item()?['enforcement']",
+                "Scope": "@item()?['scope']"
+              }
+            }
+          },
+          "Table_policy_assignments": {
+            "type": "Table",
+            "runAfter": {
+              "Select_policy_assignments": [
+                "Succeeded"
+              ]
+            },
+            "inputs": {
+              "from": "@body('Select_policy_assignments')",
+              "format": "HTML"
+            }
+          },
+          "Select_backup_vault_instances": {
+            "type": "Select",
+            "runAfter": {
+              "Query_backup_vault_instances": [
+                "Succeeded"
+              ]
+            },
+            "inputs": {
+              "from": "@body('Query_backup_vault_instances')?['data']",
+              "select": {
+                "Data source": "@item()?['datasource']",
+                "Type": "@item()?['datasourceType']",
+                "Vault": "@item()?['vaultName']",
+                "Policy": "@item()?['policy']",
+                "Status": "@item()?['status']"
+              }
+            }
+          },
+          "Table_backup_vault_instances": {
+            "type": "Table",
+            "runAfter": {
+              "Select_backup_vault_instances": [
+                "Succeeded"
+              ]
+            },
+            "inputs": {
+              "from": "@body('Select_backup_vault_instances')",
+              "format": "HTML"
+            }
+          },
+          "Compose_email_body": {
+            "type": "Compose",
+            "inputs": "<html>\n<head>\n<style>\n  body { font-family: Segoe UI, Arial, sans-serif; color: #101828; font-size: 14px; }\n  h1 { font-size: 20px; margin: 0 0 4px 0; }\n  h2 { font-size: 16px; margin: 24px 0 8px 0; border-bottom: 2px solid #eaecf0; padding-bottom: 4px; }\n  .sub { color: #475467; margin: 0 0 16px 0; }\n  .cards td { border: 1px solid #eaecf0; border-radius: 6px; padding: 10px 16px; text-align: center; }\n  .num { font-size: 24px; font-weight: 600; display: block; }\n  .ok { color: #067647; } .bad { color: #b42318; } .warn { color: #b54708; } .muted { color: #475467; }\n  table.data { border-collapse: collapse; width: 100%; font-size: 13px; }\n  table.data th { background: #f9fafb; text-align: left; padding: 6px 8px; border-bottom: 1px solid #eaecf0; }\n  table.data td { padding: 6px 8px; border-bottom: 1px solid #eaecf0; }\n  .foot { color: #667085; font-size: 12px; margin-top: 24px; }\n</style>\n</head>\n<body>\n  <h1>@{parameters('reportTitle')}</h1>\n  <p class=\"sub\">@{convertFromUtc(utcNow(), 'Eastern Standard Time', 'dddd, MMMM d, yyyy h:mm tt')} ET</p>\n\n  <h2>Executive summary</h2>\n  <table class=\"cards\" cellspacing=\"8\"><tr>\n    <td><span class=\"num\">@{body('Query_summary')?['data']?[0]?['total']}</span>Protected items</td>\n    <td><span class=\"num ok\">@{body('Query_summary')?['data']?[0]?['healthy']}</span>Healthy</td>\n    <td><span class=\"num bad\">@{body('Query_summary')?['data']?[0]?['failed']}</span>Failed</td>\n    <td><span class=\"num warn\">@{body('Query_summary')?['data']?[0]?['stale']}</span>Stale (&gt;26h)</td>\n    <td><span class=\"num muted\">@{body('Query_summary')?['data']?[0]?['stopped']}</span>Protection stopped</td>\n  </tr></table>\n\n  <h2>Needs attention</h2>\n  @{if(empty(body('Filter_needs_attention')), '<p class=\"ok\">All protected items completed a successful backup in the last 26 hours.</p>', replace(body('Table_needs_attention'), '<table>', '<table class=\"data\">'))}\n\n  <h2>Vault health</h2>\n  @{replace(body('Table_vault_health'), '<table>', '<table class=\"data\">')}\n\n  <h2>Backup policy assignments</h2>\n  @{if(empty(body('Query_policy_assignments')?['data']), '<p class=\"muted\">No backup policy assignments found.</p>', replace(body('Table_policy_assignments'), '<table>', '<table class=\"data\">'))}\n\n  <h2>Databases and Backup vault workloads</h2>\n  @{if(empty(body('Query_backup_vault_instances')?['data']), '<p class=\"muted\">No Backup vault instances found.</p>', replace(body('Table_backup_vault_instances'), '<table>', '<table class=\"data\">'))}\n\n  <p class=\"foot\">Attached: <b>JobList.csv</b> (last 24 hours, newest first, Eastern time) and <b>ProtectedItems.csv</b> (full inventory).<br/>\n  Generated automatically by an Azure Logic App using Azure Resource Graph and a managed identity.</p>\n</body>\n</html>\n",
+            "runAfter": {
+              "Query_summary": [
+                "Succeeded"
+              ],
+              "Table_needs_attention": [
+                "Succeeded"
+              ],
+              "Table_vault_health": [
+                "Succeeded"
+              ],
+              "Table_policy_assignments": [
+                "Succeeded"
+              ],
+              "Table_backup_vault_instances": [
+                "Succeeded"
+              ],
+              "Csv_job_list": [
+                "Succeeded"
+              ],
+              "Csv_protected_items": [
+                "Succeeded"
+              ]
+            }
+          }
+        },
+        "runAfter": {}
+      },
+      "Send_report": {
+        "type": "ApiConnection",
+        "runAfter": {
+          "Build_report": [
+            "Succeeded"
+          ]
+        },
+        "inputs": {
+          "host": {
+            "connection": {
+              "name": "@parameters('$connections')['office365']['connectionId']"
+            }
+          },
+          "method": "post",
+          "path": "/v2/Mail",
+          "body": {
+            "To": "@parameters('reportRecipients')",
+            "Subject": "@{parameters('reportTitle')} | @{convertFromUtc(utcNow(), 'Eastern Standard Time', 'MMM d, yyyy')} | @{if(empty(body('Filter_needs_attention')), 'All healthy', concat(string(length(body('Filter_needs_attention'))), ' need attention'))}",
+            "Body": "@{outputs('Compose_email_body')}",
+            "Importance": "Normal",
+            "Attachments": [
+              {
+                "Name": "JobList.csv",
+                "ContentBytes": "@{base64(body('Csv_job_list'))}"
+              },
+              {
+                "Name": "ProtectedItems.csv",
+                "ContentBytes": "@{base64(body('Csv_protected_items'))}"
+              }
+            ]
+          }
+        }
+      },
+      "Send_failure_alert": {
+        "type": "ApiConnection",
+        "runAfter": {
+          "Build_report": [
+            "Failed",
+            "TimedOut"
+          ]
+        },
+        "inputs": {
+          "host": {
+            "connection": {
+              "name": "@parameters('$connections')['office365']['connectionId']"
+            }
+          },
+          "method": "post",
+          "path": "/v2/Mail",
+          "body": {
+            "To": "@parameters('failureRecipients')",
+            "Subject": "FAILED: @{parameters('reportTitle')} did not run (@{convertFromUtc(utcNow(), 'Eastern Standard Time', 'MMM d, yyyy')})",
+            "Body": "<p>The daily backup report Logic App failed.</p><p>Workflow: @{workflow()?['name']}<br/>Run ID: @{workflow()?['run']?['name']}</p><p>Open the run history in the Azure portal to see which step failed.</p>",
+            "Importance": "Normal"
+          }
+        }
+      }
+    },
+    "outputs": {}
+  },
+  "parameters": {
+    "$connections": {
+      "value": {
+        "office365": {
+          "connectionId": "/subscriptions/<SUBSCRIPTION_ID>/resourceGroups/<RESOURCE_GROUP>/providers/Microsoft.Web/connections/office365",
+          "connectionName": "office365",
+          "id": "/subscriptions/<SUBSCRIPTION_ID>/providers/Microsoft.Web/locations/<REGION>/managedApis/office365"
+        }
+      }
+    }
+  }
+}

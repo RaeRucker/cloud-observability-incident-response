@@ -1,0 +1,10 @@
+// Databases and other workloads protected in Backup vaults (Azure Database for PostgreSQL, Blob, Disks, AKS).
+recoveryservicesresources
+| where type =~ 'microsoft.dataprotection/backupvaults/backupinstances'
+| extend vaultName  = tostring(split(id, '/')[8]),
+         datasource = tostring(properties.dataSourceInfo.resourceName),
+         dsType     = tostring(properties.dataSourceInfo.datasourceType),
+         status     = tostring(properties.protectionStatus.status),
+         policy     = extract(@'backupPolicies/([^/]+)$', 1, tostring(properties.policyInfo.policyId))
+| project subscriptionId, vaultName, datasource, datasourceType = dsType, policy, status
+| order by vaultName asc, datasource asc

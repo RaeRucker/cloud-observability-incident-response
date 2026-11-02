@@ -1,0 +1,11 @@
+// Daily backup success rate, for a workbook trend chart.
+AddonAzureBackupJobs
+| where TimeGenerated > ago(30d)
+| where JobOperation == "Backup"
+| summarize arg_max(TimeGenerated, *) by JobUniqueId
+| summarize Total = count(),
+            Succeeded = countif(JobStatus in ("Completed", "CompletedWithWarnings")),
+            Failed = countif(JobStatus == "Failed")
+          by Day = bin(JobStartDateTime, 1d)
+| extend SuccessRate = round(100.0 * Succeeded / Total, 1)
+| order by Day asc

@@ -1,0 +1,133 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "name": "intro",
+      "content": {
+        "json": "# Operations overview\nHost health, backup outcomes, Kubernetes stability, and Key Vault access. Each panel matches an alert in `alerts/alert-catalog.json`."
+      }
+    },
+    {
+      "type": 1,
+      "name": "header-0",
+      "content": {
+        "json": "## Hosts"
+      }
+    },
+    {
+      "type": 3,
+      "name": "panel-1",
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "Agent heartbeat by VM (last 24h)",
+        "query": "Heartbeat\n| where TimeGenerated > ago(24h)\n| summarize LastHeartbeat = max(TimeGenerated) by Computer, OSType\n| extend MinutesSilent = datetime_diff('minute', now(), LastHeartbeat)\n| extend State = iff(MinutesSilent > 10, 'Silent', 'OK')\n| order by MinutesSilent desc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table"
+      }
+    },
+    {
+      "type": 3,
+      "name": "panel-2",
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "Lowest free disk space per VM",
+        "query": "InsightsMetrics\n| where TimeGenerated > ago(1h)\n| where Namespace == 'LogicalDisk' and Name == 'FreeSpacePercentage'\n| extend Disk = tostring(parse_json(Tags)['vm.azm.ms/mountId'])\n| summarize FreePercent = round(min(Val), 1) by Computer, Disk\n| order by FreePercent asc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table"
+      }
+    },
+    {
+      "type": 1,
+      "name": "header-3",
+      "content": {
+        "json": "## Backup"
+      }
+    },
+    {
+      "type": 3,
+      "name": "panel-4",
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "Backup job outcomes (7 days)",
+        "query": "AddonAzureBackupJobs\n| where TimeGenerated > ago(7d) and JobOperation in ('Backup', 'Log')\n| summarize arg_max(TimeGenerated, *) by JobUniqueId\n| summarize Jobs = count() by bin(JobStartDateTime, 1d), JobStatus",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "barchart"
+      }
+    },
+    {
+      "type": 3,
+      "name": "panel-5",
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "Failed backup jobs (24h)",
+        "query": "AddonAzureBackupJobs\n| where TimeGenerated > ago(24h) and JobStatus == 'Failed'\n| summarize arg_max(TimeGenerated, *) by JobUniqueId\n| project JobStartDateTime, JobOperation, JobFailureCode, BackupItemUniqueId\n| order by JobStartDateTime desc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table"
+      }
+    },
+    {
+      "type": 1,
+      "name": "header-6",
+      "content": {
+        "json": "## Kubernetes"
+      }
+    },
+    {
+      "type": 3,
+      "name": "panel-7",
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "Nodes not Ready",
+        "query": "KubeNodeInventory\n| where TimeGenerated > ago(15m)\n| summarize arg_max(TimeGenerated, Status) by ClusterName, Computer\n| where Status != 'Ready'",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table"
+      }
+    },
+    {
+      "type": 3,
+      "name": "panel-8",
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "Container restarts (1h)",
+        "query": "KubePodInventory\n| where TimeGenerated > ago(1h) and ContainerRestartCount > 0\n| summarize Restarts = max(ContainerRestartCount) - min(ContainerRestartCount) by ClusterName, Namespace, Name\n| where Restarts > 0\n| order by Restarts desc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table"
+      }
+    },
+    {
+      "type": 1,
+      "name": "header-9",
+      "content": {
+        "json": "## Security"
+      }
+    },
+    {
+      "type": 3,
+      "name": "panel-10",
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "Key Vault denied requests by caller (24h)",
+        "query": "AzureDiagnostics\n| where TimeGenerated > ago(24h)\n| where ResourceProvider == 'MICROSOFT.KEYVAULT' and httpStatusCode_d == 403\n| summarize Denied = count() by Resource, CallerIPAddress, identity_claim_appid_g\n| order by Denied desc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table"
+      }
+    }
+  ],
+  "isLocked": false,
+  "fallbackResourceIds": []
+}

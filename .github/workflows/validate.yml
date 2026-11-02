@@ -1,0 +1,52 @@
+name: validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  bicep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - run: |
+          az bicep install
+          az bicep build --file infrastructure/main.bicep --stdout > /dev/null
+          az bicep lint --file infrastructure/main.bicep
+          az bicep build-params --file infrastructure/lab.bicepparam --stdout > /dev/null
+
+  catalog:
+    name: Alert catalog and workbook tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - run: |
+          curl -sSLo bicep https://github.com/Azure/bicep/releases/latest/download/bicep-linux-x64
+          chmod +x bicep && sudo mv bicep /usr/local/bin/bicep
+      - run: pip install -r tests/requirements.txt
+      - name: Workbook is up to date with its generator
+        run: |
+          python scripts/build_workbook.py
+          git diff --exit-code dashboards/operations-workbook.json
+      - run: pytest -v tests/
+
+  logic-app:
+    name: Backup report workflow JSON
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - run: python -m json.tool reporting/backup-daily-report/logic-app/workflow.json > /dev/null
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - run: |
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz | tar xz gitleaks
+          ./gitleaks detect --source . --redact --verbose
