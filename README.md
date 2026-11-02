@@ -11,15 +11,15 @@ An Azure Monitor alerting baseline defined as data and deployed with Bicep: seve
 
 ## Scenario: what's real and what this repo adds
 
-Real work at an MSP:
-- Built a Logic App that emails a client a daily Azure Backup report at 6 AM ET. It includes an executive summary (active, failed, stale), vault health, policy assignments, databases, and CSV attachments (job list newest first, times in Eastern) in a custom HTML layout. The client approved it and it runs in production.
-- Built an Azure Workbook for another client's backup health from vault diagnostics in Log Analytics.
-- Work the alert pipeline day to day: LogicMonitor alerts create Autotask tickets, and critical alerts page the PagerDuty on-call. I'm automating client notification emails for after-hours critical alerts to meet the response SLA.
+What I've done in production:
+- Built a Logic App that emails a daily Azure Backup report at 6 AM ET. It includes an executive summary (active, failed, stale), vault health, policy assignments, databases, and CSV attachments (job list newest first, times in Eastern) in a custom HTML layout. It's approved and running in production.
+- Built an Azure Workbook for backup health from vault diagnostics in Log Analytics.
+- Work the alert pipeline day to day: LogicMonitor alerts create Autotask tickets, and critical alerts page the PagerDuty on-call. I'm automating notification emails for after-hours critical alerts to meet the response SLA.
 
 Added for this repo:
-- `reporting/backup-daily-report/` is a rebuild of the daily report for this repo, not an export of the production workflow. Client names, recipients, and resource names are removed.
+- `reporting/backup-daily-report/` is a rebuild of the daily report, not an export of the production workflow. Names, recipients, and resource names are removed.
 - The Azure Monitor alert catalog, Bicep deployment, severity routing, and operations workbook are new. The production pipeline above uses LogicMonitor, not Azure Monitor alert rules.
-- The runbooks, incident process, and the simulated incident INC-SIM-0001 are written for this repo.
+- The runbooks, incident process, and the simulated incident INC-SIM-0001.
 
 ## Problem
 
