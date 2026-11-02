@@ -17,7 +17,7 @@ What I've done in production:
 - Work the alert pipeline day to day: LogicMonitor alerts create Autotask tickets, and critical alerts page the PagerDuty on-call. I'm automating notification emails for after-hours critical alerts to meet the response SLA.
 
 Added for this repo:
-- `reporting/backup-daily-report/` is a rebuild of the daily report, not an export of the production workflow. Names, recipients, and resource names are removed.
+- `reporting/backup-daily-report/` is the production Logic App, exported from code view with names, recipients, and resource IDs removed.
 - The Azure Monitor alert catalog, Bicep deployment, severity routing, and operations workbook are new. The production pipeline above uses LogicMonitor, not Azure Monitor alert rules.
 - The runbooks, incident process, and the simulated incident INC-SIM-0001.
 
@@ -37,7 +37,7 @@ Monitoring usually fails in two directions at once. Too many alerts, so people s
 | [`docs/incident-response.md`](docs/incident-response.md) | Lifecycle, roles, severity changes, recovery verification, communication template |
 | [`incidents/INC-SIM-0001`](incidents/INC-SIM-0001/incident-report.md) | Simulated incident with timeline, symptom-vs-cause analysis, detection review, and actions |
 | [`templates/post-incident-review.md`](templates/post-incident-review.md) | Blameless review template |
-| [`reporting/backup-daily-report`](reporting/backup-daily-report/README.md) | Logic App that emails an executive Azure Backup health report daily (managed identity, Resource Graph) |
+| [`reporting/backup-daily-report`](reporting/backup-daily-report/README.md) | Production Logic App that emails a daily Azure Backup health report (Log Analytics, Resource Graph, managed identity, Microsoft Graph) |
 
 ## Architecture
 

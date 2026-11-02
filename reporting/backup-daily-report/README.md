@@ -1,96 +1,85 @@
-# Azure Backup Reporting: Daily Email Report and Health Queries
+# Daily Azure Backup Report (Logic App)
 
-An Azure Logic App that emails a formatted Azure Backup health report every morning, plus a library of Resource Graph and Log Analytics queries for dashboards and audits.
-
-There are no stored credentials (it uses a managed identity), no agents, and no servers to maintain. It reads backup data across every subscription you point it at and delivers a report that a CIO can skim in 30 seconds and an engineer can act on.
-
-![Example report email](docs/example-email.png)
+A Logic App that emails a daily Azure Backup health report at 6:00 AM Eastern. It runs in production. [`logic-app/workflow.json`](logic-app/workflow.json) is the workflow definition exported from code view, with identifying details removed (see [Sanitization](#sanitization)).
 
 ## Background
 
-A client's CIO asked for a daily view of backup health that didn't require logging in to the portal. The built-in Azure Backup reports weren't what leadership wanted to read, so I rebuilt the report as a Logic App with a custom layout: an executive summary at the top, problems first, and full detail in the CSV attachments. The client's IT lead approved the format, and the report runs every morning at 6 AM Eastern. This repo is the environment-neutral version.
+The built-in Azure Backup report email gives you charts and CSVs, but it doesn't answer the questions leadership and engineers actually ask: is everything protected, what failed, is each vault configured the way it should be, and are the databases covered. I started from Microsoft's [Azure Backup report email template](https://aka.ms/AzureBackupReportEmail) and built a custom report on top of it: my own HTML layout, plus new sections that query Azure Resource Graph and the ARM API directly with a managed identity.
 
-## What's in the report
+## What's in the email
 
-| Section | Source | Why it matters |
+| # | Section | Source |
 |---|---|---|
-| Executive summary: protected / healthy / failed / stale / stopped | Resource Graph | One-glance status for leadership |
-| Needs attention: only items that are failing, stale, or stopped | Resource Graph | Engineers see the work first and nothing else |
-| Vault health: redundancy, cross-region restore, immutability, soft delete, public access | Resource Graph | Shows the security posture auditors ask about |
-| Backup policy assignments | Azure Policy | Shows backup is enforced, not ad hoc |
-| Databases and Backup vault workloads (PostgreSQL, Blob, Disks) | Resource Graph | Covers what Recovery Services vaults don't |
-| JobList.csv: last 24 h of jobs, newest first, in Eastern time | Resource Graph | Detail for anyone who needs it |
-| ProtectedItems.csv: full inventory | Resource Graph | Audit evidence |
+| 01 | Executive summary: protected, failed, and stale items by workload type | Log Analytics (Backup Reports functions) + Resource Graph |
+| 02 | Failed backup jobs, or a "no failed jobs" line | Log Analytics |
+| 03 | Backup policy assignments: which systems are on each policy, with policy settings | Resource Graph |
+| 04 | Vault health: redundancy, immutability, soft delete, cross-region restore, and missing tier policies per vault | Resource Graph |
+| 05 | Database backups: PostgreSQL (Backup vault) and Azure SQL short-term and long-term retention | Resource Graph + ARM API |
+| 06 | Backup storage trend chart per vault | Log Analytics |
+| 07 | Month-to-date storage growth per vault, in GB | Log Analytics |
 
-If the report itself fails to run, a separate failure alert goes to the ops mailbox, so a missing report never goes unnoticed.
+CSV attachments: `JobList`, `PolicyAssignments`, `BackupInstanceList`, `PoliciesList`, `BillingGroupList`, policy adherence (daily and weekly), and optimization lists (inactive resources, retention, backup schedule).
 
-## Architecture
+If the core report scopes fail, a separate failure email goes to the operations mailbox instead.
 
-```text
- Recurrence (6:00 AM Eastern)
-          │
-          ▼
- ┌─────────────────────────── Scope: Build_report ───────────────────────────┐
- │  HTTP → Azure Resource Graph (managed identity, Reader)  × 6 queries       │
- │     summary · protected items · jobs (24h) · vault health ·                │
- │     policy assignments · Backup vault instances                            │
- │          │                                                                 │
- │  Filter (not Healthy) → Select → HTML tables                               │
- │  Select (UTC → Eastern) → CSV tables                                       │
- │  Compose → custom HTML email                                               │
- └───────────────────────────────────────────────────────────────────────────┘
-          │ Succeeded                         │ Failed / TimedOut
-          ▼                                   ▼
- Send report (Outlook) + 2 CSVs        Send failure alert to ops
-```
-
-Why Resource Graph instead of the Recovery Services API? One query covers every vault in every subscription, results come back as clean JSON objects, and it only needs the Reader role.
-
-## Repository layout
+## How it works
 
 ```text
-Azure-Backup-Reporting/
-├── logic-app/
-│   └── workflow.json                    # Paste into Logic App code view
-├── templates/
-│   └── email-report.html                # The email layout (also embedded in workflow.json)
-├── queries/
-│   ├── resource-graph/
-│   │   ├── summary.kql                  # Executive summary counts
-│   │   ├── protected-items.kql          # Every protected item + health rating
-│   │   ├── backup-jobs-24h.kql          # Recent jobs, newest first
-│   │   ├── vault-health.kql             # Redundancy, immutability, soft delete, network
-│   │   ├── backup-policy-assignments.kql
-│   │   ├── backup-vault-instances.kql   # PostgreSQL / Blob / Disk protection
-│   │   └── unprotected-vms.kql          # Coverage gaps
-│   └── log-analytics/
-│       ├── job-history-30d.kql          # Long-term history (Eastern time)
-│       └── success-rate-by-day.kql      # Trend chart for a workbook
-└── docs/
-    ├── setup-guide.md                   # Step-by-step portal setup + troubleshooting
-    └── example-email.png
+Recurrence (daily, 6:00 AM Eastern)
+  │
+  ├─ Scope 1-3   Microsoft Backup Reports KQL functions → Log Analytics
+  │              (jobs, backup instances, billing groups, policies,
+  │               adherence, optimization grids, trend charts)
+  ├─ Scope 4     Resource Graph (HTTP + managed identity)
+  │              policy assignments → per-policy HTML blocks
+  ├─ Scope 5     Resource Graph: PostgreSQL backup instances
+  │              ARM API per SQL database: short- and long-term retention
+  ├─ Scope 6     Executive summary: KPIs + estate counts (Recovery Services
+  │              vaults, Backup vaults, SQL), stale = source resource deleted
+  ├─ Scope 7     Vault health: settings per vault, compares each vault's
+  │              policies against the expected "Tier-*" VM policy set
+  ├─ Scope 8     Month-to-date storage change per vault
+  │
+  └─ If any core scope failed ──► failure email to ops mailbox
+     else ──► build HTML ──► Graph: create draft message with
+              attachments (Office 365 connector) ──► send draft
 ```
 
-## Quick start
+Design choices:
 
-Follow [`docs/setup-guide.md`](docs/setup-guide.md). In short:
+- The email is sent through Microsoft Graph (create a draft, then send it) rather than the plain "Send an email" action. Graph supports file attachments and inline chart images in the same message.
+- Resource Graph and ARM calls use the Logic App's system-assigned managed identity. There are no stored credentials.
+- A resource is "stale" when its backup item still exists but the source resource doesn't, which catches deleted VMs and databases that are still being billed for backup storage.
+- Vault health flags a vault if it's missing any of the tier policies (`Tier-*`) that exist elsewhere, so policy drift between vaults shows up in the report.
 
-1. Create a Consumption Logic App and turn on its system-assigned managed identity.
-2. Grant that identity Reader on the subscriptions (or management group) to report on.
-3. Paste [`logic-app/workflow.json`](logic-app/workflow.json) into code view, connect Outlook, and set the parameters.
-4. Run trigger, then check the run history and the inbox.
+## Requirements
 
-## Using the queries on their own
+- Recovery Services vault and Backup vault diagnostic settings sending to a Log Analytics workspace, using resource-specific tables (`AddonAzureBackup*`).
+- The Logic App's managed identity has the Reader role on each subscription in scope (Resource Graph and SQL retention APIs).
+- An Azure Monitor Logs API connection with read access to the workspace.
+- An Office 365 Outlook API connection signed in as the mailbox that sends the report.
 
-Every query in `queries/resource-graph/` runs as-is in Resource Graph Explorer in the portal. That's handy during an incident ("which backups failed last night?") or an audit ("show me every vault without immutability"). The same queries can be pinned to an Azure Workbook for a live dashboard (see the setup guide).
+## Setup
 
-## Design notes
+1. Create a Consumption Logic App and turn on its system-assigned managed identity (Identity, then System assigned, then On).
+2. Give that identity the Reader role on each subscription you want in the report (Subscription, then Access control (IAM), then Add role assignment).
+3. Open the Logic App in code view and paste in `workflow.json`.
+4. In the designer, fix the two connections (Azure Monitor Logs and Office 365 Outlook) so they point at connections in your environment.
+5. Set the `workspacesToQuery` parameter to your Log Analytics workspace resource ID.
+6. Replace the placeholder recipients (`contoso.com`) in the `Compose` action and the failure email.
+7. Run the trigger manually and check the email before relying on the schedule.
 
-- Stale = no successful backup in 26 hours. That gives daily policies a 2-hour buffer. Adjust it in `protected-items.kql` and `summary.kql` if you have weekly-only policies.
-- Times are converted to Eastern in the Logic App (`convertFromUtc`), not in the query, so the same queries stay reusable for other time zones.
-- Resource Graph keeps 14 days of jobs. For longer history, send vault diagnostics to Log Analytics and use the `log-analytics` queries.
-- No secrets. The only credential is the Outlook connection, which is owned by the mailbox that sends the report.
+## Sanitization
 
-## Skills demonstrated
+Removed or replaced compared with the production export:
 
-Azure Logic Apps · managed identities and least-privilege RBAC · Azure Resource Graph and KQL · Azure Backup and Backup vaults · Azure Monitor Workbooks · reporting for executive and technical audiences
+- Subscription ID (replaced with zeros), resource group, workspace, and Logic App connection names
+- All recipient addresses (replaced with `contoso.com` placeholders) and named individuals on CC
+- Company and client names in the subject, header, and footer, and the embedded company logo
+
+The logic, queries, and layout are unchanged.
+
+## Known limitations
+
+- The failure check only looks at the first three scopes. If Scope 4-8 fails, the report still sends with those sections empty or using fallback content. Extending the condition to cover every scope is the next improvement.
+- The Microsoft Backup Reports functions make up most of the file's size. They're kept as-is so the template can be updated from Microsoft's version.
