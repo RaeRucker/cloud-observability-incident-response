@@ -9,6 +9,18 @@ An Azure Monitor alerting baseline defined as data and deployed with Bicep: seve
 | Cloud validation | Not yet deployed. Queries haven't been run against a populated workspace. |
 | Incident | INC-SIM-0001 is simulated and labeled as such |
 
+## Scenario: what's real and what this repo adds
+
+Real work at an MSP:
+- Built a Logic App that emails a client a daily Azure Backup report at 6 AM ET. It includes an executive summary (active, failed, stale), vault health, policy assignments, databases, and CSV attachments (job list newest first, times in Eastern) in a custom HTML layout. The client approved it and it runs in production.
+- Built an Azure Workbook for another client's backup health from vault diagnostics in Log Analytics.
+- Work the alert pipeline day to day: LogicMonitor alerts create Autotask tickets, and critical alerts page the PagerDuty on-call. I'm automating client notification emails for after-hours critical alerts to meet the response SLA.
+
+Added for this repo:
+- `reporting/backup-daily-report/` is a rebuild of the daily report for this repo, not an export of the production workflow. Client names, recipients, and resource names are removed.
+- The Azure Monitor alert catalog, Bicep deployment, severity routing, and operations workbook are new. The production pipeline above uses LogicMonitor, not Azure Monitor alert rules.
+- The runbooks, incident process, and the simulated incident INC-SIM-0001 are written for this repo.
+
 ## Problem
 
 Monitoring usually fails in two directions at once. Too many alerts, so people stop reading them. And no alert for the thing that actually breaks, or an alert at the wrong severity, which in practice is the same as no alert. Both come from treating alerts as one-off portal configuration instead of designed, reviewed, tested artifacts with an owner and a runbook.
